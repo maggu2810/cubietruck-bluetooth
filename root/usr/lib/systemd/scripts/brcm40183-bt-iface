@@ -1,0 +1,98 @@
+#!/bin/sh
+
+# PORT
+# FIRMWARE
+# MAC
+# MODULE
+unset RFKILL_PATH_NAME
+unset RFKILL_PATH
+unset RFKILL_INDEX
+unset MAC_OPTS
+EXTRA_OPTS="--no2bytes --tosleep=1000"
+MODULE_DFL="bt_gpio"
+PORT_DFL="/dev/ttyS1"
+
+# ===
+
+echo_err() {
+    echo "${*}" 1>&1
+}
+
+die() {
+    if [ ${#} -gt 0 ]; then
+        echo_err "${*}"
+    fi
+    exit 1
+}
+
+# We are using an udev rule now (no loop needed), keep it for information.
+bring_iface_up_and_wait_till_done() {
+    echo -n "Wait for interface..."
+    while true; do
+        IFACE="$(hciconfig | grep UART | cut -d\: -f1)"
+        if [ -n "${IFACE}" ]; then
+            hciconfig ${IFACE} up 
+            break
+        else
+            echo -n "."
+            sleep 1
+        fi
+    done
+}
+
+if [ -z "${MODULE}" ]; then
+    MODULE="${MODULE_DFL}"
+fi
+
+echo "Load module ${MODULE}"
+modprobe -v "${MODULE}"
+
+RFKILL_PATH_NAME=$(grep bcm40183 /sys/class/rfkill/*/name | cut -d\: -f1)
+if [ ${?} -ne 0 ]; then
+    die "Something went wrong on rfkill inspection."
+fi
+RFKILL_PATH="`dirname "${RFKILL_PATH_NAME}"`"
+RFKILL_INDEX="`cat "${RFKILL_PATH}"/index`"
+
+printf "Unblock RF radio using rfkill using index '%d'\n" "${RFKILL_INDEX}"
+rfkill unblock "${RFKILL_INDEX}"
+
+if [ -z "${PORT}" ]; then
+    #PORT="/dev/$(ls /sys/devices/platform/sunxi-uart.2/tty/)"
+    PORT="${PORT_DFL}"
+fi
+
+if [ ! -c "${PORT}" ]; then
+    die "Port is not a character device (${PORT})"
+fi
+
+# Create a symlink to TTY for hci service
+if [ $? -eq 0 ]; then
+        ln -sr "`basename "${PORT}"`" /dev/bcm40183
+else
+        echo_err "Cannot create symlink"
+fi
+
+if [ -z "${FIRMWARE}" ]; then
+    FIRMWARE=/lib/firmware/ap6210/bcm20710a1.hcd
+fi
+
+if [ ! -e "${FIRMWARE}" ]; then
+    die "Firmware not found: ${FIRMWARE}"
+fi
+
+if [ -z "${MAC}" ]; then
+   echo "MAC not set, will use MAC set by device (expect this to be buggy)"
+else
+   MAC_OPTS="--bd_addr ${MAC}"
+fi
+
+echo "Pull RTS low"
+# We need to send something, so send a new line character.
+echo > "${PORT}"
+echo "Upload firmware..."
+/usr/bin/brcm_patchram_plus -d --patchram "${FIRMWARE}" --enable_hci "${PORT}" ${MAC_OPTS} ${EXTRA_OPTS}
+
+# If brcm_patchram_plus did not fail, it will not return.
+
+exit 0

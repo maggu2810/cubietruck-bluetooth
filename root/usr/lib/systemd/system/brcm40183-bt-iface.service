@@ -1,0 +1,11 @@
+[Unit]
+Description=Load Broadcom bluetooth firmware
+Before=bluetooth.service
+
+[Service]
+EnvironmentFile=-/etc/conf.d/bcm40183
+Type=simple
+ExecStart=/usr/lib/systemd/scripts/brcm40183-bt-iface
+
+[Install]
+WantedBy=multi-user.target
